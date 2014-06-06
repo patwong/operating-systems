@@ -19,9 +19,14 @@
 /*
  * replace this with declarations of any synchronization and other variables you need here
  */
-static struct semaphore *globalCatMouseSem;
 
-
+struct semaphore *cat_sem;
+struct semaphore *mouse_sem;
+struct cv *catmouse_cv;
+struct lock *mutex;
+volatile char *sbowls;
+volatile int numcatseat;
+volatile int nummiceeat;
 /* 
  * The CatMouse simulation will call this function once before any cat or
  * mouse tries to each.
@@ -33,15 +38,38 @@ static struct semaphore *globalCatMouseSem;
 void
 catmouse_sync_init(int bowls)
 {
-  /* replace this default implementation with your own implementation of catmouse_sync_init */
 
-  (void)bowls; /* keep the compiler from complaining about unused parameters */
-  globalCatMouseSem = sem_create("globalCatMouseSem",1);
-  if (globalCatMouseSem == NULL) {
-    panic("could not create global CatMouse synchronization semaphore");
-  }
-  return;
+	/**********  ABSTRACT **********  
+	 * two semaphores to lock critical "after_eating" sections
+	 * cat_sem: for cat_after_eating; mouse_sem: for mouse_after eating
+	 * catmouse_cv is used to block both cats and mouse if bowl is used
+	 * sbowls is a char array; marks bowl if being used
+	 * numcatseat, nummiceeat is a counter for the number of cat
+	 *    and mice currently eating
+	 */
+
+	cat_sem = sem_create("cat_sem", 1);
+	if(cat_sem == NULL) {
+		panic("could not create cat_sem semaphore");
+	}
+	mouse_sem = sem_create("mouse_sem", 1);
+	if(mouse_sem == NULL) {
+		panic("could not create mouse_sem semaphore");
+	}
+	catmouse_cv = cv_create("catmouse_cv");
+	KASSERT(catmouse_cv != NULL);
+	mutex = lock_create("mutex");
+	KASSERT(mutex != NULL);
+	sbowls = kmalloc(bowls*sizeof(char));
+	KASSERT(sbowls != NULL);
+	for(int i = 0; i < bowls; i++) {
+		sbowls[i] = '-';
+	}
+	numcatseat = nummiceeat = 0;
+	return;
 }
+
+
 
 /* 
  * The CatMouse simulation will call this function once after all cat
@@ -54,10 +82,17 @@ catmouse_sync_init(int bowls)
 void
 catmouse_sync_cleanup(int bowls)
 {
-  /* replace this default implementation with your own implementation of catmouse_sync_cleanup */
-  (void)bowls; /* keep the compiler from complaining about unused parameters */
-  KASSERT(globalCatMouseSem != NULL);
-  sem_destroy(globalCatMouseSem);
+	(void)bowls;
+	KASSERT(cat_sem != NULL);
+	sem_destroy(cat_sem);
+	KASSERT(mouse_sem != NULL);
+	sem_destroy(mouse_sem);
+	KASSERT(catmouse_cv != NULL);
+	cv_destroy(catmouse_cv);
+	KASSERT(mutex != NULL);
+	lock_destroy(mutex);
+	KASSERT(sbowls != NULL);
+	kfree( (void *) sbowls);
 }
 
 
@@ -76,10 +111,19 @@ catmouse_sync_cleanup(int bowls)
 void
 cat_before_eating(unsigned int bowl) 
 {
-  /* replace this default implementation with your own implementation of cat_before_eating */
-  (void)bowl;  /* keep the compiler from complaining about an unused parameter */
-  KASSERT(globalCatMouseSem != NULL);
-  P(globalCatMouseSem);
+	// cat thread blocks if there are mice eating or 
+	// if the bowl is currently in use
+	// numcatseat increments if above conditions are not true;
+	// assigned bowl is free and i assume the cat will
+	//		 have the opportunity to eat
+
+	lock_acquire(mutex);
+	while(nummiceeat > 0 || sbowls[bowl - 1] != '-') {
+		cv_wait(catmouse_cv, mutex);
+	}
+	sbowls[bowl - 1] = 'c';
+	numcatseat++;
+	lock_release(mutex);
 }
 
 /*
@@ -98,10 +142,15 @@ cat_before_eating(unsigned int bowl)
 void
 cat_after_eating(unsigned int bowl) 
 {
-  /* replace this default implementation with your own implementation of cat_after_eating */
-  (void)bowl;  /* keep the compiler from complaining about an unused parameter */
-  KASSERT(globalCatMouseSem != NULL);
-  V(globalCatMouseSem);
+	/*whole function is treated as a critical section with
+	 *implementation of semaphore from the start
+	 *bowl is marked as free of use, numcatseat is decremented
+	 */
+	P(cat_sem);
+	sbowls[bowl - 1] = '-';
+	numcatseat--;
+	cv_broadcast(catmouse_cv, mutex);
+	V(cat_sem);
 }
 
 /*
@@ -119,10 +168,14 @@ cat_after_eating(unsigned int bowl)
 void
 mouse_before_eating(unsigned int bowl) 
 {
-  /* replace this default implementation with your own implementation of mouse_before_eating */
-  (void)bowl;  /* keep the compiler from complaining about an unused parameter */
-  KASSERT(globalCatMouseSem != NULL);
-  P(globalCatMouseSem);
+	// abstraction is the same as cat_before_eating except for mice
+	lock_acquire(mutex);
+	while(numcatseat > 0 || sbowls[bowl - 1] != '-') {
+		cv_wait(catmouse_cv, mutex);
+	}
+	sbowls[bowl - 1] = 'm';
+	nummiceeat++;
+	lock_release(mutex);
 }
 
 /*
@@ -141,8 +194,10 @@ mouse_before_eating(unsigned int bowl)
 void
 mouse_after_eating(unsigned int bowl) 
 {
-  /* replace this default implementation with your own implementation of mouse_after_eating */
-  (void)bowl;  /* keep the compiler from complaining about an unused parameter */
-  KASSERT(globalCatMouseSem != NULL);
-  V(globalCatMouseSem);
+	// abstraction is the same as cat_after_eating except for mice
+	P(mouse_sem);
+	sbowls[bowl - 1] = '-';
+	nummiceeat--;
+	cv_broadcast(catmouse_cv, mutex);
+	V(mouse_sem);
 }

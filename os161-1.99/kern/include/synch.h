@@ -77,10 +77,7 @@ struct lock {
 		struct wchan *lk_wchan;
 		struct spinlock lk_spinlk;
 		volatile bool lk_status;
-//		volatile void *lk_mother;
 		volatile struct thread *lk_mother;
-        // add what you need here
-        // (don't forget to mark things volatile as needed)
 };
 
 struct lock *lock_create(const char *name);
@@ -119,8 +116,7 @@ void lock_destroy(struct lock *);
 struct cv {
         char *cv_name;
 		struct wchan *cv_wchan;
-        // add what you need here
-        // (don't forget to mark things volatile as needed)
+        //cv only contains a name and a wchan
 };
 
 struct cv *cv_create(const char *name);

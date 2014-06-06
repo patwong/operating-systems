@@ -194,6 +194,14 @@ lock_acquire(struct lock *lock)
 	KASSERT(lock != NULL);
 	KASSERT(curthread->t_in_interrupt == false);
 
+	/* modelled after semaphore P(), using lock_status to track if 
+	 * the lock is unlocked or locked. the value of a lock is binary,
+	 * specifically a bool value in this implementation: false when
+	 * unlocked, true when locked. lk_mother points to the thread
+	 * that called lock_acquire. it is of type thread and points to
+	 * curthread.
+	 */
+
 	spinlock_acquire(&lock->lk_spinlk);
 	while(lock->lk_status == true) {
 		wchan_lock(lock->lk_wchan);
@@ -213,12 +221,15 @@ lock_release(struct lock *lock)
 	KASSERT(lock != NULL);
 	KASSERT(curthread->t_in_interrupt == false);
 
+	/* uses lock_do_i_hold() to check if the thread calling
+	 * the function is the creator of the lock. KASSERT
+	 * will report error if this check is false.
+	 */
+	 
 	KASSERT(lock_do_i_hold(lock) == true);
 	spinlock_acquire(&lock->lk_spinlk);
-
-		lock->lk_status = false;
-		wchan_wakeone(lock->lk_wchan);
-
+	lock->lk_status = false;
+	wchan_wakeone(lock->lk_wchan);
 	spinlock_release(&lock->lk_spinlk); 
 }
 
@@ -227,6 +238,12 @@ lock_do_i_hold(struct lock *lock)
 {
 	KASSERT(lock != NULL);
 	KASSERT(curthread->t_in_interrupt == false);
+
+	/* checks if lk_mother, the pointer to the original thread
+	 * that called lock_acquire, is the same as the current thread.
+	 * this is only called in lock_release.
+	 */
+
 	if(lock->lk_mother == curthread) {
 		return true;
 	} else {
@@ -242,6 +259,7 @@ lock_do_i_hold(struct lock *lock)
 struct cv *
 cv_create(const char *name)
 {
+	//cv only contains a name and a wait channel
         struct cv *cv;
 
         cv = kmalloc(sizeof(struct cv));
@@ -261,8 +279,6 @@ cv_create(const char *name)
 			return NULL;
 		}
 
-        // add stuff here as needed
-        
         return cv;
 }
 
@@ -271,8 +287,6 @@ cv_destroy(struct cv *cv)
 {
         KASSERT(cv != NULL);
 
-        // add stuff here as needed
-//		spinlock_cleanup(&cv->cv_spin);
         wchan_destroy(cv->cv_wchan);
         kfree(cv->cv_name);
         kfree(cv);
@@ -284,6 +298,11 @@ cv_wait(struct cv *cv, struct lock *lock)
 	KASSERT(cv != NULL);
 	KASSERT(lock != NULL);
 	KASSERT(curthread->t_in_interrupt == false);
+
+	/* follows the description of conditional variables
+	 * in the course notes.
+	 */
+
 	wchan_lock(cv->cv_wchan);
 	lock_release(lock);
 	wchan_sleep(cv->cv_wchan);
