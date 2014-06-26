@@ -38,6 +38,9 @@
 
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
+#include "opt-A2.h"
+#include <types.h>
+#include <synch.h>
 
 struct addrspace;
 struct vnode;
@@ -45,6 +48,52 @@ struct vnode;
 struct semaphore;
 #endif // UW
 
+#if OPT_A2
+
+//pid list struct
+//struct pidlist {
+//	pid_t pid;
+//	struct pidlist *next;
+//};
+
+//list to associate every child proc to a parent proc
+struct proclist {
+	pid_t ppid;
+	pid_t mypid;
+	int exitcode;
+	int runornot;
+	struct proclist *next;
+};
+
+pid_t parentpid(pid_t pid);
+int runstatus(pid_t pid);
+void notrunning(pid_t pid);
+void addproclist(pid_t ppid);
+void addexitcode(pid_t pid, int exitcode);
+int getexitcode(pid_t pid);
+//creates a new node for the list of pids
+//volatile struct pidlist *list_of_pids = NULL;
+struct pidlist *new_pid_node(void);
+
+//creates a pid for a proccess
+pid_t pidcreator(void);
+
+//removes a pid from the list of pids
+int removepid(pid_t pid);
+
+//checks if a pid exists: 1 if exists, 0 if notexists
+int pid_exists(pid_t pid);
+
+//adds a proc to the child/parent association list
+//void procinit(pid_t parentpid, pid_t childpid);
+
+//waitpid, exit, getpid auxiliary functions
+void proc_lock_acquire();
+void proc_lock_release();
+void proc_cv_wait();
+void proc_cv_signal();
+void proc_cv_broadcast();
+#endif
 /*
  * Process structure.
  */
@@ -68,6 +117,13 @@ struct proc {
   struct vnode *console;                /* a vnode for the console device */
 #endif
 
+#if OPT_A2
+  	pid_t pid;
+	pid_t ppid;
+	int exitcode;
+	int exitstatus;
+//	int childcount;
+#endif
 	/* add more material here as needed */
 };
 

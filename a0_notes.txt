@@ -1,0 +1,12 @@
+p1:
+looked into main.c, found string, modified string
+
+p2:
+looked at threads.c; contains DEBUG() fn
+	- assumed thread_fork was to be called - WRONG; 
+		- cannot call DEBUG() from another function
+looked at kprintf.c - contains dbflags, but only menu.c can be changed
+looked at lib.h - contains various flags for DEBUG()
+	- 0x10 is for DB_THREADS
+	- dbflags=16 (external shared var) in menu.c
+	- success
