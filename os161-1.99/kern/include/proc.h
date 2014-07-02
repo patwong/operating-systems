@@ -50,13 +50,15 @@ struct semaphore;
 
 #if OPT_A2
 
-//pid list struct
-//struct pidlist {
-//	pid_t pid;
-//	struct pidlist *next;
-//};
-
+//list of locks: each lock and cv is associated with a pid
+struct locklist {
+	pid_t ppid;
+	struct lock *lock;
+	struct cv *cv;
+	struct locklist *next;
+};
 //list to associate every child proc to a parent proc
+//also contains the curproc's exitcode and running status
 struct proclist {
 	pid_t ppid;
 	pid_t mypid;
@@ -64,17 +66,20 @@ struct proclist {
 	int runornot;
 	struct proclist *next;
 };
-
-pid_t parentpid(pid_t pid);
+void addlock(pid_t ppid);
+void removelock(pid_t ppid);
+struct lock *lockretrieve(pid_t ppid);
+struct cv *cvretrieve(pid_t ppid);
 int runstatus(pid_t pid);
 void notrunning(pid_t pid);
-void addproclist(pid_t ppid);
+void addproclist(pid_t pid, pid_t ppid);
 void addexitcode(pid_t pid, int exitcode);
 int getexitcode(pid_t pid);
+int ismychild(pid_t pid);
 //creates a new node for the list of pids
 //volatile struct pidlist *list_of_pids = NULL;
-struct pidlist *new_pid_node(void);
-
+struct proclist *new_pid_node(void);
+ 
 //creates a pid for a proccess
 pid_t pidcreator(void);
 
@@ -84,15 +89,6 @@ int removepid(pid_t pid);
 //checks if a pid exists: 1 if exists, 0 if notexists
 int pid_exists(pid_t pid);
 
-//adds a proc to the child/parent association list
-//void procinit(pid_t parentpid, pid_t childpid);
-
-//waitpid, exit, getpid auxiliary functions
-void proc_lock_acquire();
-void proc_lock_release();
-void proc_cv_wait();
-void proc_cv_signal();
-void proc_cv_broadcast();
 #endif
 /*
  * Process structure.
@@ -120,9 +116,6 @@ struct proc {
 #if OPT_A2
   	pid_t pid;
 	pid_t ppid;
-	int exitcode;
-	int exitstatus;
-//	int childcount;
 #endif
 	/* add more material here as needed */
 };

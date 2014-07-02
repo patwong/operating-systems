@@ -74,27 +74,26 @@ struct semaphore *no_proc_sem;
 
 #if OPT_A2
 //my code
-//global list of pids for all processes
-
-/*void waitlist(pid_t pid) {
-	//do something
-}*/
-struct lock *proclock;
-struct cv *proc_cv;
+//proclist is a linked list which contains the current process':
+//	pid, parent's pid, exitcode, run status, and pointer to the next
+//	node
 struct proclist *procstats;
 
+//list of locks: each lock and cv associated with a pid
+struct locklist *listoflocks;
+
+//gets the exitcode of the process specified by pid
 int getexitcode(pid_t pid) {
-	//code
 	struct proclist *node;
 	node = procstats;
 	while(node->mypid != pid) {
 		node = node->next;
 	}
-	if(node->mypid == pid) {
-		return node->exitcode;
-	}
-	return 0;
+	return node->exitcode;
 }
+
+//checks if the current process is running, returns 1 if running,
+//0 if not running
 int runstatus(pid_t pid) {
 	struct proclist *curr;
 	if(pid_exists(pid) == 0) {
@@ -112,7 +111,10 @@ int runstatus(pid_t pid) {
 		return curr->runornot;
 	}
 	return EINVAL;
+	//all this error checking is probably unnecessary
 }
+
+//change the current process' running status to 0
 void notrunning(pid_t pid) {
 	struct proclist *node;
 	node = procstats;
@@ -124,57 +126,93 @@ void notrunning(pid_t pid) {
 	}
 }
 
-pid_t parentpid(pid_t pid) {
+
+//adds a lock to the locklist given pid
+void addlock(pid_t ppid) {
+	struct locklist *node = kmalloc(sizeof(struct locklist *));
+	node->ppid = ppid;
+	node->lock = lock_create("locklist");
+	node->cv = cv_create("locklist");
+	node->next = NULL;
+	if(listoflocks == NULL) {
+		listoflocks = node;
+	} else {
+		struct locklist *curr;
+		curr = listoflocks;
+		while(curr->next != NULL) {
+			curr = curr->next;
+		}
+		curr->next = node;
+	}
+}
+
+//removes a lock from locklist given pid
+void removelock(pid_t pid) {
+	struct locklist *node;
+	struct locklist *prev;
+	node = listoflocks;
+	prev = node;
+	if(node->ppid == pid) {
+		listoflocks = listoflocks->next;
+	} else {
+		while(node->ppid != pid) {
+			prev = node;
+			node = node->next;
+		}
+		prev->next = node->next;
+	}
+	lock_destroy(node->lock);
+	cv_destroy(node->cv);
+	kfree(node);
+}
+//retrieves a lock associated with given pid
+struct lock *lockretrieve(pid_t ppid) {
+	struct locklist *node;
+	node = listoflocks;
+	while(node->ppid != ppid) {
+		node = node->next;
+	}
+	return node->lock;
+}
+
+//retrieves a cv associated with given pid
+struct cv *cvretrieve(pid_t ppid) {
+	struct locklist *node;
+	node = listoflocks;
+	while(node->ppid != ppid) {
+		node = node->next;
+	}
+	return node->cv;
+}
+
+//checks if the given process' pid is curproc's child
+int ismychild(pid_t pid) {
 	struct proclist *node;
 	node = procstats;
 	while(node->mypid != pid) {
 		node = node->next;
 	}
-	return node->ppid;
+	if(curproc->pid != node->ppid) {
+		return 0; //not my child
+	} 
+	return 1; //my child
 }
-void proc_lock_acquire();
-	lock_acquire(proclock);
-}
-
-void proc_lock_release();
-	lock_release(proclock);
-}
-
-void proc_cv_wait(){
-	proc_lock_acquire();
-	cv_wait(proc_cv, proclock);
-	proc_lock_release();
-}
-
-//probably won't need
-void proc_cv_signal(){
-	proc_lock_acquire();
-	cv_signal(proc_cv, proclock);
-	proc_lock_release();
-}
-
-void proc_cv_broadcast(){
-	proc_lock_acquire();
-	cv_broadcast(proc_cv, proclock);
-	proc_lock_release();
-}
-
-//creates a node for _pids
+//creates a node for procstats 
 struct proclist *new_pid_node(void) {
 	struct proclist *node;
 	node = kmalloc(sizeof(struct proclist *));
 	node->ppid = 0;
 	node->mypid = 0;
-	int exitcode = 0;
-	int runornot = 0;
+	node->exitcode = 0;
+	node->runornot = 0;
 	node->next = NULL;
 	return node;
 }
 
-//creates a pid for the new process
+//creates a pid for the new process and adds it to procstats
 pid_t pidcreator(void) {
 
-	//initializes the first process that will use list_of_pids
+	//initializes the first process that will use procstats 
 	if(procstats == NULL) {
 		procstats = new_pid_node();
 		if(procstats == NULL){
@@ -182,24 +220,25 @@ pid_t pidcreator(void) {
 		}
 		procstats->mypid = __PID_MIN;
 		procstats->next = NULL;
-		return list_of_pids->mypid;
+		return procstats->mypid;
 	}
 
 	struct proclist *curr;
 	struct proclist *after_curr;
 	struct proclist *node;
-	curr = proclist;
+	curr = procstats;
 	after_curr = curr->next;
 	node = NULL;
 
-	//goes through list_of_pids to get last node of the pidlist
-	//list_of_pids sorted numerically low-to-high
-	//unused pid: if difference between two pid nodes > 1
+	//gets the last node of procstats
+	//procstats sorted numerically low-to-high
+	//unused pid exists if difference between two pid nodes > 1
 	if(after_curr == NULL) {
 		node = new_pid_node();
 		node->mypid = curr->mypid + 1;
 		node->next = NULL;
 		curr->next = node;
+		return node->mypid;
 	} else {
 		while(after_curr != NULL) {
 			if((after_curr->mypid - curr->mypid) > 1) {
@@ -218,10 +257,11 @@ pid_t pidcreator(void) {
 	}
 	
 
-	//append a new pid node to the end of list_of_pids
+	//append a new pid node to the end of procstats
 	node = new_pid_node();
 	node->mypid = curr->mypid + 1;
-	if(node->pid > __PID_MAX){
+	if(node->mypid > __PID_MAX){
+		//panic("\nout of pids!!!\n");
 		return EINVAL;
 	}
 	node->next = NULL;
@@ -229,7 +269,7 @@ pid_t pidcreator(void) {
 	return node->mypid;
 }
 
-//finds the the given pid and removes the node and pid from list_of_pids
+//finds the the given pid and removes the node and pid from procstats
 int removepid(pid_t pid) {
 	struct proclist *curr;
 	struct proclist *prev;
@@ -239,8 +279,10 @@ int removepid(pid_t pid) {
 
 	if(procstats == NULL) return EINVAL;
 
+	//if the first item in procstats is item that should be removed
+	//returns 1 on success, else fails
 	if(pid == curr->mypid) {
-		list_of_pids = curr->next;
+		procstats = curr->next;
 		kfree(curr);
 		return 1;
 	} else if(curr->next != NULL) {
@@ -267,7 +309,7 @@ int pid_exists(pid_t pid) {
 	if(procstats == NULL) {
 		return 0;
 	}
-	struct procstats *curr;
+	struct proclist *curr;
 	curr = procstats;
 	while(curr != NULL) {
 		if(pid == curr->mypid) {
@@ -278,21 +320,21 @@ int pid_exists(pid_t pid) {
 	return 0;					//pid doesn't exist
 }
 
-//adds a proc to the child/parent association list
-void addproclist(pid_t ppid) {
-	struct proclist *node = kmalloc(sizeof(struct proclist));
-	node->ppid = ppid;
-	node->mypid = mypid;
-	node->exitcode = 0;
-	node->runornot = 1;
-	node->next = NULL;
-	if(proclist == NULL) {
-		procstats = node;
-	} else {
-		procstats->next = node;
+//adds the process' parent to its entry in procstats
+//also sets the run status of the process to be 1 (running)
+void addproclist(pid_t pid, pid_t ppid) {
+	struct proclist *node;
+	node = procstats;
+	while(node->mypid != pid) {
+		node = node->next;
 	}
+	node->ppid = ppid;
+	node->exitcode = 0;	//exitcode will be 0 until process exits
+	node->runornot = 1;
+	
 }
 
+//associates the process to its exitcode
 void addexitcode(pid_t pid, int exitcode) {
 	struct proclist *node;
 	node = procstats;
@@ -336,9 +378,6 @@ proc_create(const char *name)
 	proc->console = NULL;
 #endif // UW
 #if OPT_A2
-//	if(list_of_pids == NULL) {
-//		pid_lock = NULL;
-//	}
 	proc->pid = pidcreator();
 #endif
 
@@ -374,9 +413,6 @@ proc_destroy(struct proc *proc)
 		VOP_DECREF(proc->p_cwd);
 		proc->p_cwd = NULL;
 	}
-#if OPT_A2
-	removepid(proc->pid);
-#endif
 
 #ifndef UW  // in the UW version, space destruction occurs in sys_exit, not here
 	if (proc->p_addrspace) {
@@ -434,21 +470,24 @@ proc_destroy(struct proc *proc)
 void
 proc_bootstrap(void)
 {
+#if OPT_A2
+  procstats = NULL;
+  listoflocks = NULL;
+#endif
   kproc = proc_create("[kernel]");
-
+  if (kproc == NULL) {
+    panic("\nproc_create for kproc failed\n");
+  }
 #if OPT_A2
   //remove its pid, set to 0;
-  //kernel has special PID of 0; will be not be seen by other procs 
-  removepid(kproc->pid);
+  //kernel has special PID of 0; should not be seen by other procs 
+  int checkremove = removepid(kproc->pid);
+  if(checkremove != 1) {
+	  panic("\nsomehow removepid failed\n");
+  }
   kproc->pid = 0;
-  proclock = lock_create("exitlock");
-  proc_cv = cv_create("exit cv");
-  procstats = NULL; 
 #endif
 
-  if (kproc == NULL) {
-    panic("proc_create for kproc failed\n");
-  }
 #ifdef UW
   proc_count = 0;
   proc_count_mutex = sem_create("proc_count_mutex",1);
@@ -520,8 +559,7 @@ proc_create_runprogram(const char *name)
            are created using a call to proc_create_runprogram  */
 	P(proc_count_mutex); 
 #if OPT_A2
-//	proc->pid = pidcreator();
-	procinit(curproc->pid, proc->pid);
+	addlock(proc->pid);
 #endif
 	proc_count++;
 	V(proc_count_mutex);

@@ -192,7 +192,9 @@ enter_forked_process(void * tf, unsigned long data2)
 	t_f->tf_v0 = 0;
 	t_f->tf_a3 = 0;
 	t_f->tf_epc += 4;
+	memcpy(&temp,t_f,sizeof(struct trapframe));
+//	temp = *t_f;
+	kfree(t_f);
 	as_activate();
-	temp = *t_f;
 	mips_usermode(&temp);
 }

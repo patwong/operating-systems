@@ -24,9 +24,8 @@ int sys_fork(struct trapframe *tf, int32_t * retval) {
 	struct addrspace *newspace;
 
 	int x;
-//	int plvl;
-//	plvl = splx(IPL_HIGH);
-	newproc = proc_create_runprogram(curproc->p_name);
+//	int plvl = splhigh();
+	newproc = proc_create_runprogram("child");
 	if(newproc == NULL) {
 		return ENOMEM;
 	}
@@ -41,19 +40,24 @@ int sys_fork(struct trapframe *tf, int32_t * retval) {
 	}
 	//sets the parent pid of the new proc to be the current proc
 	newproc->ppid = curproc->pid;
-	//modify procstats to set the newproc's run status as "running": 1 
+
+	//initializing new node for the procstats list of information:
+	//modify procstats to set the newproc's run status as "running": 1
+	//newproc's parent pid is curproc's pid
 	addproclist(newproc->pid, newproc->ppid);
 	struct trapframe *ts;
 	ts = kmalloc(sizeof(struct trapframe));
-	memcpy(ts, tf, sizeof(struct trapframe));
+	if(ts == NULL) return ENOMEM;
+	*ts = *tf;
+//	memcpy(ts, tf, sizeof(struct trapframe));
 	x = thread_fork("this", newproc, enter_forked_process, ts, 0);
 	if(x != 0){
+		kfree(ts);
 		panic("\nsomething died after child's thread_fork\n");
 		return EINVAL;
 	}
 	(*retval) = newproc->pid;
 	threadarray_init(&newproc->p_threads);
-//	plvl = splx(IPL_NONE);
 	return (0);
 	
 }
@@ -74,28 +78,39 @@ void sys__exit(int exitcode) {
   
 	struct lock *lockitup;
 	struct cv *cvwake; 
-  //if parent exists, then lock
-  //otherwise no point in locking since there is no one to wake up
-  if(pid_exists(curproc->ppid)) {
-	  lockitup = lockretrieve(curproc->ppid);
-	  cvwake = cvretrieve(curproc->ppid);
-	  lock_acquire(lockitup);
-  }
-  notrunning(curproc->pid);
-  addexitcode(curproc->pid, _MKWAIT_EXIT(exitcode));
-  //wake up parent proc and release lock
-  if(pid_exists(curproc->ppid)) {
-	  cv_broadcast(cvwake, lockitup);
-	  lock_release(lockitup);
-  } else {
-	  //assumption: 
-	  //if proc is exiting, then it doesn't care about its children
-	  //can just remove its pid from the table
-	  removepid(curproc->pid); //need to remove entry in wait if parent exist
-  }
- spinlock_acquire(&curproc->p_lock);
- removelock(curproc->pid);
- spinlock_release(&curproc->p_lock);
+
+	
+	//if parent exists, then lock and signal parent
+	//otherwise no point in locking since there is no one to wake up
+	if(pid_exists(curproc->ppid)) {
+		//retrieves the lock and cv associated with the parent
+		lockitup = lockretrieve(curproc->ppid);
+		cvwake = cvretrieve(curproc->ppid);
+		lock_acquire(lockitup);
+		
+		//change status to not running, add exitcode
+		notrunning(curproc->pid);
+		addexitcode(curproc->pid, _MKWAIT_EXIT(exitcode));
+		
+		//signal parent
+		cv_signal(cvwake, lockitup);
+		lock_release(lockitup);
+	} else {
+	//assumption: 
+	//since parent exited, no one cares about curproc's exit status.
+	//if curproc is exiting, then it doesn't care about its children
+	//	so i can just remove its pid from the table;
+	//	otherwise parent will remove it from the table in waitpid
+		removepid(curproc->pid); 
+	}
+
+//when i should i remove the lock associated with curproc's pid?
+//since curproc exiting, curproc is not going to call waitpid
+//also no other proc will be waiting on curproc
+//the lock associated with curproc can thus be removed
+spinlock_acquire(&curproc->p_lock);
+removelock(curproc->pid);
+spinlock_release(&curproc->p_lock);
 
 #endif
  as_deactivate();
@@ -148,11 +163,13 @@ sys_waitpid(pid_t pid,
   int result;
 
 #if OPT_A2
+  //gets the lock and cv associated with the current proc's pid
   struct lock *lockitup;
   lockitup = lockretrieve(curproc->pid);
   struct cv *cvsleep;
   cvsleep = cvretrieve(curproc->pid);
 
+  lock_acquire(lockitup);
   //error cases
   //if the child doesn't exist, error
   if(pid_exists(pid) == 0) { lock_release(lockitup); return ESRCH; }
@@ -162,13 +179,15 @@ sys_waitpid(pid_t pid,
 
   //if status != 0, error
   if(status != 0) { lock_release(lockitup);	return EFAULT; }
-  
+  //is it my child? 1 if my child, 0 if not
+  if(ismychild(pid) != 1) { lock_release(lockitup); return EINVAL; }
 
   //if the child is still running, sleep
   while(runstatus(pid) != 0) {
 	  cv_wait(cvsleep, lockitup);
   }
   exitstatus = getexitcode(pid);
+  removepid(pid);		//child pid can be removed from list
   lock_release(lockitup);
   result = copyout((void *)&exitstatus,status,sizeof(int));
   if (result) {
