@@ -24,6 +24,8 @@ int sys_fork(struct trapframe *tf, int32_t * retval) {
 	struct addrspace *newspace;
 
 	int x;
+//	int plvl;
+//	plvl = splx(IPL_HIGH);
 	newproc = proc_create_runprogram(curproc->p_name);
 	if(newproc == NULL) {
 		return ENOMEM;
@@ -37,18 +39,21 @@ int sys_fork(struct trapframe *tf, int32_t * retval) {
 	if(newproc->p_addrspace == NULL) {
 		return ENOMEM;
 	}
+	//sets the parent pid of the new proc to be the current proc
 	newproc->ppid = curproc->pid;
-	newproc->runornot = 1;
-	addproclist(curproc->pid);
-	struct trapframe *ts = kmalloc(sizeof(struct trapframe));
-	memcpy(ts, tf, sizeof(struct trapframe *));
+	//modify procstats to set the newproc's run status as "running": 1 
+	addproclist(newproc->pid, newproc->ppid);
+	struct trapframe *ts;
+	ts = kmalloc(sizeof(struct trapframe));
+	memcpy(ts, tf, sizeof(struct trapframe));
 	x = thread_fork("this", newproc, enter_forked_process, ts, 0);
 	if(x != 0){
-		panic("something died after child's thread_fork");
+		panic("\nsomething died after child's thread_fork\n");
 		return EINVAL;
 	}
 	(*retval) = newproc->pid;
-	curproc->childcount++;
+	threadarray_init(&newproc->p_threads);
+//	plvl = splx(IPL_NONE);
 	return (0);
 	
 }
@@ -56,31 +61,42 @@ int sys_fork(struct trapframe *tf, int32_t * retval) {
 #endif
 
 
-  /* this implementation of sys__exit does not do anything with the exit code */
-  /* this needs to be fixed to get exit() and waitpid() working properly */
 
 void sys__exit(int exitcode) {
 
   struct addrspace *as;
   struct proc *p = curproc;
-  /* for now, just include this to keep the compiler from complaining about
-     an unused variable */
-//  (void)exitcode;
 
   DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",exitcode);
 
   KASSERT(curproc->p_addrspace != NULL);
 #if OPT_A2
-  proc_lock_acquire();
-  notrunning(curproc->pid);
-  addexitcode(curproc->pid, _MKWAIT(exitcode));
-  if(pid_exists(parentpid(curproc->pid))) {
-	  proc_cv_broadcast();
-  } else {
-	  removepid(curproc->pid);
-	  //can remove pid
-  }
   
+	struct lock *lockitup;
+	struct cv *cvwake; 
+  //if parent exists, then lock
+  //otherwise no point in locking since there is no one to wake up
+  if(pid_exists(curproc->ppid)) {
+	  lockitup = lockretrieve(curproc->ppid);
+	  cvwake = cvretrieve(curproc->ppid);
+	  lock_acquire(lockitup);
+  }
+  notrunning(curproc->pid);
+  addexitcode(curproc->pid, _MKWAIT_EXIT(exitcode));
+  //wake up parent proc and release lock
+  if(pid_exists(curproc->ppid)) {
+	  cv_broadcast(cvwake, lockitup);
+	  lock_release(lockitup);
+  } else {
+	  //assumption: 
+	  //if proc is exiting, then it doesn't care about its children
+	  //can just remove its pid from the table
+	  removepid(curproc->pid); //need to remove entry in wait if parent exist
+  }
+ spinlock_acquire(&curproc->p_lock);
+ removelock(curproc->pid);
+ spinlock_release(&curproc->p_lock);
+
 #endif
  as_deactivate();
   /*
@@ -100,22 +116,18 @@ void sys__exit(int exitcode) {
   /* if this is the last user process in the system, proc_destroy()
      will wake up the kernel menu thread */
   proc_destroy(p);
- #if OPT_A2  
-  proc_lock_release();
-#endif
   thread_exit();
   /* thread_exit() does not return, so we should never get here */
   panic("return from thread_exit in sys_exit\n");
 }
 
 
-/* stub handler for getpid() system call                */
+
 int
 sys_getpid(pid_t *retval)
 {
-  /* for now, this is just a stub that always returns a PID of 1 */
-  /* you need to fix this to make it work properly */
 #if OPT_A2
+  //push the value of the current's process into retval
   *retval = curproc->pid;
   return (0);
 #else
@@ -124,7 +136,7 @@ sys_getpid(pid_t *retval)
 #endif
 }
 
-/* stub handler for waitpid() system call                */
+
 
 int
 sys_waitpid(pid_t pid,
@@ -135,26 +147,29 @@ sys_waitpid(pid_t pid,
   int exitstatus;
   int result;
 
-  /* this is just a stub implementation that always reports an
-     exit status of 0, regardless of the actual exit status of
-     the specified process.   
-     In fact, this will return 0 even if the specified process
-     is still running, and even if it never existed in the first place.
-
-     Fix this!
-  */
 #if OPT_A2
-  proc_lock_acquire();
-  if(pid_exists(pid) == 0) { proc_lock_release(); return EINVAL; }
-  if(options != 0){ proc_lock_release(); return EINVAL; }
-  if(status != 0) { 
-	  proc_lock_release();
-	  return EINVAL;
-  }
+  struct lock *lockitup;
+  lockitup = lockretrieve(curproc->pid);
+  struct cv *cvsleep;
+  cvsleep = cvretrieve(curproc->pid);
+
+  //error cases
+  //if the child doesn't exist, error
+  if(pid_exists(pid) == 0) { lock_release(lockitup); return ESRCH; }
+
+  //if options are not 0, error
+  if(options != 0){ lock_release(lockitup); return EINVAL; }
+
+  //if status != 0, error
+  if(status != 0) { lock_release(lockitup);	return EFAULT; }
+  
+
+  //if the child is still running, sleep
   while(runstatus(pid) != 0) {
-	  proc_cv_wait();
+	  cv_wait(cvsleep, lockitup);
   }
-  proc_lock_release();
+  exitstatus = getexitcode(pid);
+  lock_release(lockitup);
   result = copyout((void *)&exitstatus,status,sizeof(int));
   if (result) {
     return(result);
