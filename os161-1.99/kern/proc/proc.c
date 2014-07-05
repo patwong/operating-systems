@@ -129,7 +129,9 @@ void notrunning(pid_t pid) {
 
 //adds a lock to the locklist given pid
 void addlock(pid_t ppid) {
-	struct locklist *node = kmalloc(sizeof(struct locklist *));
+	struct locklist *node;
+	node = kmalloc(sizeof(struct locklist ));
+	if(node == NULL) panic("\nnot enough mem!!!\n");
 	node->ppid = ppid;
 	node->lock = lock_create("locklist");
 	node->cv = cv_create("locklist");
@@ -151,7 +153,7 @@ void removelock(pid_t pid) {
 	struct locklist *node;
 	struct locklist *prev;
 	node = listoflocks;
-	prev = node;
+//	prev = node;
 	if(node->ppid == pid) {
 		listoflocks = listoflocks->next;
 	} else {
@@ -167,6 +169,7 @@ void removelock(pid_t pid) {
 }
 //retrieves a lock associated with given pid
 struct lock *lockretrieve(pid_t ppid) {
+	if(pid_exists(ppid) == 0) panic("\ninvalid pid!\n");
 	struct locklist *node;
 	node = listoflocks;
 	while(node->ppid != ppid) {
@@ -200,7 +203,7 @@ int ismychild(pid_t pid) {
 //creates a node for procstats 
 struct proclist *new_pid_node(void) {
 	struct proclist *node;
-	node = kmalloc(sizeof(struct proclist *));
+	node = kmalloc(sizeof(struct proclist ));
 	node->ppid = 0;
 	node->mypid = 0;
 	node->exitcode = 0;
@@ -241,7 +244,8 @@ pid_t pidcreator(void) {
 		return node->mypid;
 	} else {
 		while(after_curr != NULL) {
-			if((after_curr->mypid - curr->mypid) > 1) {
+	//		kprintf("\nafter_curr: %d, after_curr_exit: %d, a_c_run: %d, ac_parent: %d, curr: %d\n", after_curr->mypid, after_curr->exitcode, after_curr->runornot, after_curr->ppid, curr->mypid);
+			if(after_curr->mypid - curr->mypid > 1) {
 				node = new_pid_node();
 				node->mypid = curr->mypid + 1;
 				curr->next = node;
@@ -303,9 +307,18 @@ int removepid(pid_t pid) {
 	return EINVAL;
 //	panic("something wrong with pid\n");
 }
+int validpid(pid_t pid) {
+	if(pid < __PID_MIN || pid > __PID_MAX) {
+		return 0;
+	}
+	return 1;
+}
 
-//checks if given pid exists
+//checks if given pid is valid and if it exists
 int pid_exists(pid_t pid) {
+	if(validpid(pid) == 0) {
+		return 0;
+	}
 	if(procstats == NULL) {
 		return 0;
 	}
@@ -378,6 +391,7 @@ proc_create(const char *name)
 	proc->console = NULL;
 #endif // UW
 #if OPT_A2
+	proc->ppid = 0;
 	proc->pid = pidcreator();
 #endif
 

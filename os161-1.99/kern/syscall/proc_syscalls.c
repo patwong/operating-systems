@@ -15,8 +15,6 @@
 #include <mips/trapframe.h>
 
 #if OPT_A2
-//struct lock *pidlock;
-
 
 
 int sys_fork(struct trapframe *tf, int32_t * retval) {
@@ -24,9 +22,12 @@ int sys_fork(struct trapframe *tf, int32_t * retval) {
 	struct addrspace *newspace;
 
 	int x;
-//	int plvl = splhigh();
+	int plvl = splhigh();
 	newproc = proc_create_runprogram("child");
 	if(newproc == NULL) {
+		return ENOMEM;
+	}
+	if(validpid(newproc->pid) == 0) {
 		return ENOMEM;
 	}
 
@@ -51,13 +52,13 @@ int sys_fork(struct trapframe *tf, int32_t * retval) {
 	*ts = *tf;
 //	memcpy(ts, tf, sizeof(struct trapframe));
 	x = thread_fork("this", newproc, enter_forked_process, ts, 0);
+	splx(plvl);
 	if(x != 0){
 		kfree(ts);
 		panic("\nsomething died after child's thread_fork\n");
 		return EINVAL;
 	}
 	(*retval) = newproc->pid;
-	threadarray_init(&newproc->p_threads);
 	return (0);
 	
 }
@@ -82,10 +83,13 @@ void sys__exit(int exitcode) {
 	
 	//if parent exists, then lock and signal parent
 	//otherwise no point in locking since there is no one to wake up
-	if(pid_exists(curproc->ppid)) {
+
+	if(pid_exists(curproc->ppid) == 1) {
 		//retrieves the lock and cv associated with the parent
 		lockitup = lockretrieve(curproc->ppid);
+		if(lockitup == NULL) panic("\nparent's lock doesn't exist!\n");
 		cvwake = cvretrieve(curproc->ppid);
+		if(cvwake == NULL) panic("\nparent's cv doesn't exist!\n");
 		lock_acquire(lockitup);
 		
 		//change status to not running, add exitcode
@@ -97,21 +101,15 @@ void sys__exit(int exitcode) {
 		lock_release(lockitup);
 	} else {
 	//assumption: 
-	//since parent exited, no one cares about curproc's exit status.
+	//since parent doesn't exist, no one cares about curproc's exit status.
 	//if curproc is exiting, then it doesn't care about its children
 	//	so i can just remove its pid from the table;
 	//	otherwise parent will remove it from the table in waitpid
 		removepid(curproc->pid); 
+		removelock(curproc->pid);
 	}
 
-//when i should i remove the lock associated with curproc's pid?
-//since curproc exiting, curproc is not going to call waitpid
-//also no other proc will be waiting on curproc
-//the lock associated with curproc can thus be removed
-spinlock_acquire(&curproc->p_lock);
-removelock(curproc->pid);
-spinlock_release(&curproc->p_lock);
-
+//original code below left intact
 #endif
  as_deactivate();
   /*
@@ -163,24 +161,41 @@ sys_waitpid(pid_t pid,
   int result;
 
 #if OPT_A2
+  //error cases
+  //if the child doesn't exist, error
+  if(pid_exists(pid) == 0){
+	  kprintf("\nerror in waitpid pid_ex\n");
+	  return ESRCH;
+  }
+  //if options are not 0, error
+  if(options != 0){
+	  kprintf("\nerror in waitpid options\n");
+	  return EINVAL;
+  }
+
+//when i tried to check the status i got an error
+//don't know how to make a proper check but it seems that my code
+//	works fine without this test!
+
+  //if status != 0, error
+//  if(status != NULL){
+//	  kprintf("\nerror in waitpid status\n");
+//	  return EFAULT;
+//  }
+
+  //is it my child? 1 if my child, 0 if not
+  if(ismychild(pid) != 1){
+	  kprintf("\nTHE KID IS NOT MY SON!!\n");
+	  return EINVAL;
+  }
+
   //gets the lock and cv associated with the current proc's pid
   struct lock *lockitup;
-  lockitup = lockretrieve(curproc->pid);
   struct cv *cvsleep;
+  lockitup = lockretrieve(curproc->pid);
   cvsleep = cvretrieve(curproc->pid);
 
   lock_acquire(lockitup);
-  //error cases
-  //if the child doesn't exist, error
-  if(pid_exists(pid) == 0) { lock_release(lockitup); return ESRCH; }
-
-  //if options are not 0, error
-  if(options != 0){ lock_release(lockitup); return EINVAL; }
-
-  //if status != 0, error
-  if(status != 0) { lock_release(lockitup);	return EFAULT; }
-  //is it my child? 1 if my child, 0 if not
-  if(ismychild(pid) != 1) { lock_release(lockitup); return EINVAL; }
 
   //if the child is still running, sleep
   while(runstatus(pid) != 0) {
@@ -188,13 +203,14 @@ sys_waitpid(pid_t pid,
   }
   exitstatus = getexitcode(pid);
   removepid(pid);		//child pid can be removed from list
+  removelock(pid);		//remove lock associated with child 
   lock_release(lockitup);
   result = copyout((void *)&exitstatus,status,sizeof(int));
   if (result) {
     return(result);
   }
   *retval = pid;
-  return 0;
+  return (0);
 #else
   if (options != 0) {
     return(EINVAL);

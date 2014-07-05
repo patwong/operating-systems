@@ -89,6 +89,8 @@ int removepid(pid_t pid);
 //checks if a pid exists: 1 if exists, 0 if notexists
 int pid_exists(pid_t pid);
 
+//checks if a pid is valid
+int validpid(pid_t pid);
 #endif
 /*
  * Process structure.
