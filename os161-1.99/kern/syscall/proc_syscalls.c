@@ -13,9 +13,75 @@
 #include <synch.h>
 #include <spl.h>
 #include <mips/trapframe.h>
+#include <vfs.h>
+#include <kern/fcntl.h>
 
 #if OPT_A2
+int sys_execv(char *progname, char **args) {
+	//program pathname and array of strings
+//	(void)progname;
+	(void)args;
+	execvrunprog(progname);
+	//call execvrunprog
+	//code
+	//failure return -1? set errno to some value?
+	//return errno
+	return 0;
+}
 
+int
+execvrunprog(char *progname)
+{
+	    struct addrspace *as;
+		struct vnode *v;
+		vaddr_t entrypoint, stackptr;
+		int result;
+		
+		/* Open the file. */
+		result = vfs_open(progname, O_RDONLY, 0, &v);
+		if (result) {
+			return result;
+		}
+		/* We should be a new process. */	
+//		KASSERT(curproc_getas() == NULL);
+
+		/* Create a new address space. */
+		as = as_create();
+		if (as ==NULL) {
+			vfs_close(v);
+			return ENOMEM;
+		}
+
+	    /* Switch to it and activate it. */		
+		//curproc_setas(as);
+		curproc->p_addrspace = as;
+		as_activate();
+
+		/* Load the executable. */
+		result = load_elf(v, &entrypoint);
+		if (result) {
+		/* p_addrspace will go away when curproc is destroyed */
+			vfs_close(v);
+			return result;
+		}
+		
+		/* Done with the file now. */		
+		vfs_close(v);
+
+		/* Define the user stack in the address space */
+		result = as_define_stack(as, &stackptr);
+		if (result) {
+			/* p_addrspace will go away when curproc is destroyed */
+			return result;
+		}
+
+		/* Warp to user mode. */
+		enter_new_process(0 /*argc*/, NULL /*userspace addr of argv*/,
+			stackptr, entrypoint);	
+		/* enter_new_process does not return. */
+		panic("enter_new_process returned\n");
+		return EINVAL;
+}
 
 int sys_fork(struct trapframe *tf, int32_t * retval) {
 	struct proc *newproc;
@@ -51,7 +117,7 @@ int sys_fork(struct trapframe *tf, int32_t * retval) {
 	if(ts == NULL) return ENOMEM;
 	*ts = *tf;
 //	memcpy(ts, tf, sizeof(struct trapframe));
-	x = thread_fork("this", newproc, enter_forked_process, ts, 0);
+	x = thread_fork("this", newproc, enter_forked_process, ts,(unsigned long) newspace);
 	splx(plvl);
 	if(x != 0){
 		kfree(ts);
@@ -108,6 +174,10 @@ void sys__exit(int exitcode) {
 		removepid(curproc->pid); 
 		removelock(curproc->pid);
 	}
+	//what if parent exits but never waitpids?
+	//what if proc exits but exited children still in system?
+	//need to remove those pids
+	//check their running status; if not running, remove their pids
 
 //original code below left intact
 #endif
@@ -174,8 +244,8 @@ sys_waitpid(pid_t pid,
   }
 
 //when i tried to check the status i got an error
-//don't know how to make a proper check but it seems that my code
-//	works fine without this test!
+//so i don't know how to make a proper check
+// but it seems that my code works fine without checking status!
 
   //if status != 0, error
 //  if(status != NULL){

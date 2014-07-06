@@ -134,7 +134,9 @@ syscall(struct trapframe *tf)
 	case SYS_fork:
 		err = sys_fork(tf, &retval);	//something to be implemented
 		break;
-
+	case SYS_execv:
+		err = sys_execv((char *)tf->tf_a0, (char **)tf->tf_a1);
+		break;
 #endif
 
 #endif // UW
@@ -187,13 +189,15 @@ void
 enter_forked_process(void * tf, unsigned long data2)
 {
 	struct trapframe *t_f = (struct trapframe *) tf;
-	(void)data2;
+	struct addrspace *addrsp = (struct addrspace *) data2;
+//	(void)data2;
 	struct trapframe temp;
 	t_f->tf_v0 = 0;
 	t_f->tf_a3 = 0;
 	t_f->tf_epc += 4;
-	memcpy(&temp,t_f,sizeof(struct trapframe));
-//	temp = *t_f;
+//	memcpy(&temp,t_f,sizeof(struct trapframe));
+	temp = *t_f;
+	curproc_setas(addrsp);
 	kfree(t_f);
 	as_activate();
 	mips_usermode(&temp);

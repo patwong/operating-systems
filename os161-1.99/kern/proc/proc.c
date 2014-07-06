@@ -244,7 +244,8 @@ pid_t pidcreator(void) {
 		return node->mypid;
 	} else {
 		while(after_curr != NULL) {
-	//		kprintf("\nafter_curr: %d, after_curr_exit: %d, a_c_run: %d, ac_parent: %d, curr: %d\n", after_curr->mypid, after_curr->exitcode, after_curr->runornot, after_curr->ppid, curr->mypid);
+	//		kprintf("\nafter_curr: %d, after_curr_exit: %d, a_c_run: %d, ac_parent: %d, curr: %d\n", 
+	//				after_curr->mypid, after_curr->exitcode, after_curr->runornot, after_curr->ppid, curr->mypid);
 			if(after_curr->mypid - curr->mypid > 1) {
 				node = new_pid_node();
 				node->mypid = curr->mypid + 1;
