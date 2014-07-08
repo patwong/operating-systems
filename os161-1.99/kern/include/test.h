@@ -26,6 +26,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+#include "opt-A2.h"
 
 #ifndef _TEST_H_
 #define _TEST_H_
@@ -81,7 +82,11 @@ int mallocstress(int, char **);
 int nettest(int, char **);
 
 /* Routine for running a user-level program. */
+#if OPT_A2
+int runprogram(char *progname, char **args, unsigned long nargs);
+#else
 int runprogram(char *progname);
+#endif
 
 /* Kernel menu system. */
 void menu(char *argstr);

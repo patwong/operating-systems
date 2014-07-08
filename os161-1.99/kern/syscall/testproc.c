@@ -20,7 +20,7 @@
 
 #if OPT_A2
 
-//i think i have poor synchronization on exit or waitpid.
+//most likely poor synchronization on exit or waitpid
 //with semaphore on execv, the multiple forks calling execv
 //	don't fail, specifically hogparty. otherwise, i had
 //  error on trying to retrieve the lock in vfs
@@ -43,8 +43,6 @@ int stackarray(char **args, char **argsstack, int numargs) {
 	}
 	return 0;
 }
-
-//written around the original runprogram as hinted in lecture
 int sys_execv(char *progname, char **args) {
 	struct addrspace *as;
 	struct vnode *v;
@@ -52,7 +50,7 @@ int sys_execv(char *progname, char **args) {
 	int result;
 	int numargs = 0;
 	char *childname;
-	char **argsstack;
+	//char **argsstack;
 	int y, argsstrlen, argsstrspace;
 
 	P(execvsem);
@@ -85,13 +83,13 @@ int sys_execv(char *progname, char **args) {
 			return E2BIG;
 		}
 
-		//creates stack "array" by copying args into kernel
-		argsstack = kmalloc(sizeof(char *) * numargs);
-		result = stackarray(args, argsstack, numargs);
-		if(result) {
-			V(execvsem);
-			return result;
-		}
+		//creates stack "array" by copying given args into kernel
+		//argsstack = kmalloc(sizeof(char *) * numargs);
+//		result = stackarray(args, argsstack, numargs);
+//		if(result) {
+//			V(execvsem);
+//			return result;
+//		}
 	}
 
 	/* Open the file. */
@@ -139,21 +137,20 @@ int sys_execv(char *progname, char **args) {
 		return result;
 	}
 
-	//copy the individual strings in args into stack array
+	//copy the strings in args into stack array
 	if(args != NULL) {
 		vaddr_t argsptr[numargs+1];
 		y = numargs - 1;
-
 		//the given stackptr starts at the top
 		while(y >= 0) {
 			//end of every string is filled with unimportant values
 			//it is of size 4 - (arg length mod four)
-			argsstrlen = strlen(argsstack[y]) + 1;
+			argsstrlen = strlen(args[y]) + 1;
 			argsstrspace = 4 - (argsstrlen % 4);
 
 			//shift stackptr to the item in the array and copyoutstr
 			stackptr = stackptr - argsstrlen - argsstrspace; 		
-			result = copyoutstr(argsstack[y], (userptr_t)stackptr, argsstrlen, NULL);
+			result = copyoutstr(args[y], (userptr_t)stackptr, argsstrlen, NULL);
 			if(result) {
 				V(execvsem);
 				return result;
@@ -162,13 +159,14 @@ int sys_execv(char *progname, char **args) {
 			argsptr[y] = stackptr;
 			y--;
 		}
-		//the top of the stack array will be pointing to nothing
+		//the end of the stack array will be pointing to nothing
 		argsptr[numargs] = 0;
 		y = numargs;
 
-		//bottom part of stack is list of pointers
+		//bottom part of stack points to a list of pointers
+		//so decrement it by size of vaddr_t which is size int
 		while(y >= 0) {
-		//so decrement by its size and copy onto stack
+			//each element of size 4
 			stackptr = stackptr - sizeof(vaddr_t);
 			result = copyout(&argsptr[y], (userptr_t)stackptr, sizeof(vaddr_t));
 			if(result){
@@ -178,7 +176,6 @@ int sys_execv(char *progname, char **args) {
 			y--;
 		}
 	}
-
 	/* Warp to user mode. */
 	V(execvsem);
 	enter_new_process(numargs, (userptr_t)stackptr,	stackptr, entrypoint);	
@@ -189,15 +186,12 @@ int sys_execv(char *progname, char **args) {
 }
 
 int sys_fork(struct trapframe *tf, int32_t * retval) {
-//all relevant a2a helper functions are defined in proc.c
 	struct proc *newproc;
 	struct addrspace *newspace;
 
 	int x;
 	int plvl = splhigh();
 	newproc = proc_create_runprogram("child");
-
-	//error checking
 	if(newproc == NULL) {
 		return ENOMEM;
 	}
@@ -209,8 +203,6 @@ int sys_fork(struct trapframe *tf, int32_t * retval) {
 	if(x == ENOMEM) {
 		return ENOMEM;
 	}
-
-	//create new addrspace for new proc
 	newproc->p_addrspace = newspace;
 	if(newproc->p_addrspace == NULL) {
 		return ENOMEM;
@@ -227,8 +219,6 @@ int sys_fork(struct trapframe *tf, int32_t * retval) {
 	if(ts == NULL) return ENOMEM;
 	*ts = *tf;
 //	memcpy(ts, tf, sizeof(struct trapframe));
-
-	//become a clone
 	x = thread_fork("this", newproc, enter_forked_process, ts,(unsigned long) newspace);
 	splx(plvl);
 	if(x != 0){
@@ -288,8 +278,8 @@ void sys__exit(int exitcode) {
 	}
 	//what if parent exits but never waitpids?
 	//what if proc exits but exited children still in system?
-	//might need to remove those pids
-	//how: check their running status; if not running, remove their pids
+	//need to remove those pids
+	//check their running status; if not running, remove their pids
 
 //original code below left intact
 #endif
@@ -355,8 +345,10 @@ sys_waitpid(pid_t pid,
 	  return EINVAL;
   }
 
-//value of status is not used in our implementation of waitpid
-//not going to check for erroneous values
+//when i tried to check the status i got an error
+//so i don't know how to make a proper check
+// but it seems that my code works fine without checking status!
+
   //if status != 0, error
 //  if(status != NULL){
 //	  kprintf("\nerror in waitpid status\n");
@@ -391,8 +383,6 @@ sys_waitpid(pid_t pid,
   }
   *retval = pid;
   return (0);
-
-//original code below
 #else
   if (options != 0) {
     return(EINVAL);

@@ -72,6 +72,7 @@ static struct semaphore *proc_count_mutex;
 struct semaphore *no_proc_sem;   
 #endif  // UW
 
+
 #if OPT_A2
 //my code
 //proclist is a linked list which contains the current process':
@@ -81,6 +82,8 @@ struct proclist *procstats;
 
 //list of locks: each lock and cv associated with a pid
 struct locklist *listoflocks;
+
+//********both proclist and locklist structs defined in proc.h********//
 
 //gets the exitcode of the process specified by pid
 int getexitcode(pid_t pid) {
@@ -127,7 +130,7 @@ void notrunning(pid_t pid) {
 }
 
 
-//adds a lock to the locklist given pid
+//adds a lock to locklist given pid
 void addlock(pid_t ppid) {
 	struct locklist *node;
 	node = kmalloc(sizeof(struct locklist ));
@@ -200,7 +203,7 @@ int ismychild(pid_t pid) {
 	} 
 	return 1; //my child
 }
-//creates a node for procstats 
+//creates a node for proclist 
 struct proclist *new_pid_node(void) {
 	struct proclist *node;
 	node = kmalloc(sizeof(struct proclist ));
@@ -215,7 +218,7 @@ struct proclist *new_pid_node(void) {
 //creates a pid for the new process and adds it to procstats
 pid_t pidcreator(void) {
 
-	//initializes the first process that will use procstats 
+	//initializes the first process that will use procstats
 	if(procstats == NULL) {
 		procstats = new_pid_node();
 		if(procstats == NULL){

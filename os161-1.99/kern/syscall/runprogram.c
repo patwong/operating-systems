@@ -44,13 +44,103 @@
 #include <vfs.h>
 #include <syscall.h>
 #include <test.h>
-
+#include "opt-A2.h"
+#include <copyinout.h>
 /*
  * Load program "progname" and start running it in usermode.
  * Does not return except on error.
  *
  * Calls vfs_open on progname and thus may destroy it.
  */
+
+#if OPT_A2
+int runprogram(char *progname, char **args, unsigned long nargs) {
+	//almost an exact copy of the second half of execv,
+	//which copies all the arguments from args into the stack
+	//difference: no argument copying
+	struct addrspace *as;
+	struct vnode *v;
+	vaddr_t entrypoint, stackptr;
+	int result;
+
+	result = vfs_open(progname, O_RDONLY, (mode_t)0, &v);
+	if (result) return result;
+
+	//should be a brand new process
+	KASSERT(curproc_getas() == NULL);
+
+	//create new addrspace
+    as = as_create();
+	if (as == NULL) {
+		vfs_close(v);
+		return ENOMEM;
+	}
+
+	//switch to new addrspace and activate it
+	curproc_setas(as);
+	as_activate();
+
+	//load the exectuable file
+	result = load_elf(v, &entrypoint);
+	if (result) {
+		/* p_addrspace will go away when curproc is destroyed */
+		vfs_close(v);
+		return result;
+	}
+
+	//done with the file
+	vfs_close(v);
+
+	//define the userstack
+	result = as_define_stack(curproc->p_addrspace, &stackptr);
+	if(result) return result;
+
+	//load arguments from args
+	if(args != NULL) {
+		vaddr_t argsptr[nargs+1];
+		int y = nargs - 1;
+		int argsstrlen = 0;
+		int argsstrspace = 0;
+		//the given stackptr starts at the top
+		while(y >= 0) {
+			//end of every string is filled with unimportant values
+			//it is of size 4 - (arg length mod four)
+			argsstrlen = strlen(args[y]) + 1;
+			argsstrspace = 4 - (argsstrlen % 4);
+
+			//shift stackptr to the item in the array and copyoutstr
+			stackptr = stackptr - argsstrlen - argsstrspace;
+			result = copyoutstr(args[y], (userptr_t)stackptr, argsstrlen, NULL);
+			if(result) return result;
+
+			//point to the next item in args
+			argsptr[y] = stackptr;
+			y--;
+		}
+
+		//the top of the stack array will be pointing to nothing
+		argsptr[nargs] = 0;
+		y = nargs;
+
+		//bottom part of stack is list of pointers
+		while(y >= 0) {
+		//so decrement by its size and copy onto stack
+			stackptr = stackptr - sizeof(vaddr_t);
+			result = copyout(&argsptr[y], (userptr_t)stackptr, sizeof(vaddr_t));
+			if(result) return result;
+			y--;
+		}
+	}
+
+	//become the new process
+	enter_new_process(nargs, (userptr_t)stackptr, stackptr, entrypoint);
+
+	/* enter_new_process does not return. */
+	panic("enter_new_process returned\n");
+	return EINVAL;
+
+}
+#else
 int
 runprogram(char *progname)
 {
@@ -105,4 +195,4 @@ runprogram(char *progname)
 	panic("enter_new_process returned\n");
 	return EINVAL;
 }
-
+#endif
