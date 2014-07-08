@@ -102,7 +102,7 @@ int sys_execv(char *progname, char **args) {
 	}
 
 	//if curproc has an addrspace, clear it
-	if(curproc->p_addrspace) {
+	if(curproc->p_addrspace != NULL) {
 		as = curproc->p_addrspace;
 		as_destroy(as);
 		curproc->p_addrspace = NULL;
@@ -139,7 +139,7 @@ int sys_execv(char *progname, char **args) {
 		return result;
 	}
 
-	//copy the individual strings in args into stack array
+	//copy the individual strings in args into the real stack
 	if(args != NULL) {
 		vaddr_t argsptr[numargs+1];
 		y = numargs - 1;
@@ -151,24 +151,26 @@ int sys_execv(char *progname, char **args) {
 			argsstrlen = strlen(argsstack[y]) + 1;
 			argsstrspace = 4 - (argsstrlen % 4);
 
-			//shift stackptr to the item in the array and copyoutstr
-			stackptr = stackptr - argsstrlen - argsstrspace; 		
+			//shift stackptr to start of stack location where arg can be copied
+			stackptr = stackptr - argsstrlen - argsstrspace;
+
+			//and copy stack array into real stack
 			result = copyoutstr(argsstack[y], (userptr_t)stackptr, argsstrlen, NULL);
 			if(result) {
 				V(execvsem);
 				return result;
 			}
-			//point to the next item in stack
+			//point to the current location in stack
 			argsptr[y] = stackptr;
 			y--;
 		}
-		//the top of the stack array will be pointing to nothing
+		//the top of the stack will be pointing to nothing
 		argsptr[numargs] = 0;
 		y = numargs;
 
 		//bottom part of stack is list of pointers
 		while(y >= 0) {
-		//so decrement by its size and copy onto stack
+		//so decrement by its size and copy the pointers onto stack
 			stackptr = stackptr - sizeof(vaddr_t);
 			result = copyout(&argsptr[y], (userptr_t)stackptr, sizeof(vaddr_t));
 			if(result){

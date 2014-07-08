@@ -95,12 +95,13 @@ int runprogram(char *progname, char **args, unsigned long nargs) {
 	result = as_define_stack(curproc->p_addrspace, &stackptr);
 	if(result) return result;
 
-	//load arguments from args
+	//copy the individual strings in args into the real stack
 	if(args != NULL) {
 		vaddr_t argsptr[nargs+1];
 		int y = nargs - 1;
 		int argsstrlen = 0;
 		int argsstrspace = 0;
+
 		//the given stackptr starts at the top
 		while(y >= 0) {
 			//end of every string is filled with unimportant values
@@ -108,8 +109,10 @@ int runprogram(char *progname, char **args, unsigned long nargs) {
 			argsstrlen = strlen(args[y]) + 1;
 			argsstrspace = 4 - (argsstrlen % 4);
 
-			//shift stackptr to the item in the array and copyoutstr
+			//shift stackptr to start of stack location where arg can be copied
 			stackptr = stackptr - argsstrlen - argsstrspace;
+
+			//and copy stack array into real stack
 			result = copyoutstr(args[y], (userptr_t)stackptr, argsstrlen, NULL);
 			if(result) return result;
 
@@ -124,7 +127,7 @@ int runprogram(char *progname, char **args, unsigned long nargs) {
 
 		//bottom part of stack is list of pointers
 		while(y >= 0) {
-		//so decrement by its size and copy onto stack
+		//so decrement by its size and copy the pointers onto stack
 			stackptr = stackptr - sizeof(vaddr_t);
 			result = copyout(&argsptr[y], (userptr_t)stackptr, sizeof(vaddr_t));
 			if(result) return result;
