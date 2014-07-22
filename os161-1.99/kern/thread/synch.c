@@ -229,6 +229,7 @@ lock_release(struct lock *lock)
 	KASSERT(lock_do_i_hold(lock) == true);
 	spinlock_acquire(&lock->lk_spinlk);
 	lock->lk_status = false;
+	lock->lk_mother = NULL;
 	wchan_wakeone(lock->lk_wchan);
 	spinlock_release(&lock->lk_spinlk); 
 }

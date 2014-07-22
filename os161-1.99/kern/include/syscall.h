@@ -68,7 +68,7 @@ int sys_waitpid(pid_t pid, userptr_t status, int options, pid_t *retval);
 #if OPT_A2
 int sys_fork(struct trapframe *tf, int32_t *retval);
 int sys_execv(char * progname, char **args);
-void execv_sync(void);
+//void execv_sync(void);
 int stackarray(char **args, char **argsstack, int numargs);
 #endif
 

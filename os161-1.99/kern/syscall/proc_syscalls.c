@@ -20,18 +20,6 @@
 
 #if OPT_A2
 
-//i think i have poor synchronization on exit or waitpid.
-//with semaphore on execv, the multiple forks calling execv
-//	don't fail, specifically hogparty. otherwise, i had
-//  error on trying to retrieve the lock in vfs
-//initialized in boot()
-
-struct semaphore *execvsem;
-
-void execv_sync(void) {
-	execvsem = sem_create("for execv only", 1);
-}
-
 //create the stack array
 int stackarray(char **args, char **argsstack, int numargs) {
 	int result, x = 0;
@@ -55,24 +43,14 @@ int sys_execv(char *progname, char **args) {
 	char **argsstack;
 	int y, argsstrlen, argsstrspace;
 
-	P(execvsem);
 
 	//error checking	
-	if(progname == NULL){
-		V(execvsem);
-		return ENOENT;
-	}
-	if(strlen(progname) == 0){
-		V(execvsem);
-		return ENOENT;
-	}
+	if(progname == NULL) return ENOENT;
+	if(strlen(progname) == 0) return ENOENT;
 
 	//put progname in kernel memory
 	childname = kstrdup(progname);
-	if(childname == NULL) {
-		V(execvsem);
-		return ENOMEM;
-	}
+	if(childname == NULL) return ENOMEM;
 
 	//if there are arguments, put on kernel
 	if(args != NULL) {
@@ -80,26 +58,17 @@ int sys_execv(char *progname, char **args) {
 		while(args[numargs] != NULL) numargs++;
 
 		//10 arguments max accepted
-		if(numargs > 10){
-			V(execvsem);
-			return E2BIG;
-		}
+		if(numargs > 10) return E2BIG;
 
 		//creates stack "array" by copying args into kernel
 		argsstack = kmalloc(sizeof(char *) * numargs);
 		result = stackarray(args, argsstack, numargs);
-		if(result) {
-			V(execvsem);
-			return result;
-		}
+		if(result) return result;
 	}
 
 	/* Open the file. */
 	result = vfs_open(childname, O_RDONLY, 0, &v);
-	if (result){
-		V(execvsem);
-		return result;
-	}
+	if (result) return result;
 
 	//if curproc has an addrspace, clear it
 	if(curproc->p_addrspace != NULL) {
@@ -111,7 +80,6 @@ int sys_execv(char *progname, char **args) {
 	/* Create a new address space. */
 	as = as_create();
 	if (as == NULL) {
-		V(execvsem);
 		vfs_close(v);
 		return ENOMEM;
 	}
@@ -124,7 +92,6 @@ int sys_execv(char *progname, char **args) {
 	result = load_elf(v, &entrypoint);
 	if (result) {
 		/* p_addrspace will go away when curproc is destroyed */
-		V(execvsem);
 		vfs_close(v);
 		return result;
 	}
@@ -134,10 +101,7 @@ int sys_execv(char *progname, char **args) {
 
 	/* Define the user stack in the address space */
 	result = as_define_stack(curproc->p_addrspace, &stackptr);
-	if (result){
-		V(execvsem);
-		return result;
-	}
+	if (result)	return result;
 
 	//copy the individual strings in args into the real stack
 	if(args != NULL) {
@@ -156,10 +120,8 @@ int sys_execv(char *progname, char **args) {
 
 			//and copy stack array into real stack
 			result = copyoutstr(argsstack[y], (userptr_t)stackptr, argsstrlen, NULL);
-			if(result) {
-				V(execvsem);
-				return result;
-			}
+			if(result) return result;
+
 			//point to the current location in stack
 			argsptr[y] = stackptr;
 			y--;
@@ -173,16 +135,12 @@ int sys_execv(char *progname, char **args) {
 		//so decrement by its size and copy the pointers onto stack
 			stackptr = stackptr - sizeof(vaddr_t);
 			result = copyout(&argsptr[y], (userptr_t)stackptr, sizeof(vaddr_t));
-			if(result){
-				V(execvsem);
-				return result;
-			}
+			if(result) return result;
 			y--;
 		}
 	}
 
 	/* Warp to user mode. */
-	V(execvsem);
 	enter_new_process(numargs, (userptr_t)stackptr,	stackptr, entrypoint);	
 
 	/* enter_new_process does not return. */
